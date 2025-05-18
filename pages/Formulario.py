@@ -7,7 +7,6 @@ st.set_page_config(
     page_title="Face detection",
     page_icon=":guardsman:",    
 )
-
 st.title("Formulario de Datos Personales")
 st.sidebar.success("select a page above.")
 
