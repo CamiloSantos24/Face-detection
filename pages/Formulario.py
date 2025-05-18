@@ -100,10 +100,11 @@ with st.form("datos_personales"):
                     "imagen_url": imagen_url,
                 }
                 insert_resp = supabase.table("datos_personales").insert(data).execute()
-                if insert_resp.error:
-                    st.error(f"Error guardando datos: {insert_resp.error.message}")
+                if response.status_code != 201:  # 201 Created al insertar
+                    st.error(f"Error guardando datos: {response.error}")
                 else:
-                    st.success("¡Datos guardados correctamente en Supabase! 🎉")
+                    st.success("Datos guardados correctamente")
+
             except Exception as e:
                 st.error(f"Error guardando datos: {e}")
 
