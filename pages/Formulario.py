@@ -1,16 +1,20 @@
 import streamlit as st
-import os
-import csv
 import uuid
+from supabase import create_client, Client
+
+# Configura tus credenciales de Supabase (ideal usar st.secrets)
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(
     page_title="Face detection",
-    page_icon=":guardsman:",    
+    page_icon=":guardsman:",
 )
 st.title("Formulario de Datos Personales")
 st.sidebar.success("select a page above.")
 
-# Estados para manejar ambas fuentes de imagen
 if 'show_camera' not in st.session_state:
     st.session_state.show_camera = False
 if 'captured_image' not in st.session_state:
@@ -25,13 +29,11 @@ with st.form("datos_personales"):
     correo = st.text_input("Correo electrónico")
     genero = st.selectbox("Género", ["Selecciona...", "Masculino", "Femenino", "Otro"])
 
-    # Sección de imagen (cámara o upload)
     col1, col2 = st.columns(2)
     with col1:
         if st.form_submit_button("📸 Activar cámara"):
             st.session_state.show_camera = True
-            st.session_state.uploaded_image = None  # Resetear upload si usan cámara
-
+            st.session_state.uploaded_image = None
     with col2:
         upload_image = st.file_uploader(
             "⬆️ Subir imagen",
@@ -44,10 +46,9 @@ with st.form("datos_personales"):
                 "bytes": upload_image.getvalue(),
                 "filename": upload_image.name
             }
-            st.session_state.captured_image = None  # Resetear cámara si suben archivo
+            st.session_state.captured_image = None
             st.session_state.show_camera = False
 
-    # Mostrar cámara solo si está activada
     if st.session_state.show_camera:
         camera_input = st.camera_input("Toma tu foto")
         if camera_input:
@@ -67,57 +68,44 @@ with st.form("datos_personales"):
             not correo.strip() or
             genero == "Selecciona..."
         )
-
         if campos_vacios:
             st.error("❌ Por favor, completa todos los campos obligatorios.")
         else:
-            # Crear carpeta si no existe
-            datos_dir = os.path.join(os.getcwd(), "datos")
-            os.makedirs(datos_dir, exist_ok=True)
+            # Seleccionar imagen
+            imagen_data = st.session_state.captured_image or st.session_state.uploaded_image
 
-            # Determinar qué imagen usar
-            imagen_data = None
-            if st.session_state.captured_image:
-                imagen_data = st.session_state.captured_image
-            elif st.session_state.uploaded_image:
-                imagen_data = st.session_state.uploaded_image
-
-            # Guardar datos en CSV
-            datos_path = os.path.join(datos_dir, "datos_personales.csv")
-            file_exists = os.path.isfile(datos_path)
-            
-            with open(datos_path, mode="a", newline="", encoding="utf-8") as file:
-                writer = csv.writer(file)
-                if not file_exists:
-                    writer.writerow(["Nombre", "Edad", "C.C", "Correo", "Género", "Imagen"])
-                
-                imagen_nombre = imagen_data["filename"] if imagen_data else ""
-                writer.writerow([nombre, edad, CC, correo, genero, imagen_nombre])
-
-            # Guardar imagen si existe
+            # Subir imagen a Supabase Storage
+            imagen_url = None
             if imagen_data:
-                imagen_path = os.path.join(datos_dir, imagen_data["filename"])
-                with open(imagen_path, "wb") as img_file:
-                    img_file.write(imagen_data["bytes"])
+                # Crear un nombre único para la imagen
+                unique_filename = f"{uuid.uuid4().hex}_{imagen_data['filename']}"
+                try:
+                    res = supabase.storage.from_("validaciones").upload(unique_filename, imagen_data["bytes"])
+                    if res.get("error") is None:
+                        # Obtener URL pública
+                        imagen_url = supabase.storage.from_("validaciones").get_public_url(unique_filename).get("publicUrl")
+                    else:
+                        st.error(f"Error subiendo imagen: {res['error']['message']}")
+                except Exception as e:
+                    st.error(f"Error subiendo imagen: {e}")
 
-            # Mensaje de éxito
-            mensaje = (
-                f"¡Datos guardados correctamente! 🎉\n\n"
-                f"**Nombre:** {nombre}\n"
-                f"**Edad:** {edad}\n"
-                f"**CC:** {CC}\n"
-                f"**Correo:** {correo}\n"
-                f"**Género:** {genero}"
-            )
-            
-            if imagen_data:
-                mensaje += f"\n\n**Imagen guardada:** `{imagen_data['filename']}`"
-                if st.session_state.captured_image:
-                    mensaje += " (desde cámara)"
+            # Insertar datos en la tabla
+            try:
+                data = {
+                    "nombre": nombre,
+                    "edad": edad,
+                    "cc": CC,
+                    "correo": correo,
+                    "genero": genero,
+                    "imagen_url": imagen_url,
+                }
+                insert_resp = supabase.table("datos_personales").insert(data).execute()
+                if insert_resp.error:
+                    st.error(f"Error guardando datos: {insert_resp.error.message}")
                 else:
-                    mensaje += " (desde archivo)"
-
-            st.success(mensaje)
+                    st.success("¡Datos guardados correctamente en Supabase! 🎉")
+            except Exception as e:
+                st.error(f"Error guardando datos: {e}")
 
             # Resetear estados después del éxito
             st.session_state.captured_image = None
